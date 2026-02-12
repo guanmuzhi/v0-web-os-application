@@ -85,10 +85,10 @@ export function CalculatorApp() {
   const isOperator = (btn: string) => ["+", "-", "×", "÷"].includes(btn)
 
   return (
-    <div className="h-full flex flex-col bg-card p-4">
+    <div className="h-full flex flex-col bg-[oklch(0.10_0.01_250)] p-4">
       {/* Display */}
-      <div className="bg-secondary/50 rounded-xl p-4 mb-4">
-        <div className="text-right text-4xl font-light text-foreground truncate">{display}</div>
+      <div className="bg-black/40 rounded-xl p-4 mb-4">
+        <div className="text-right text-4xl font-light text-white truncate">{display}</div>
       </div>
 
       {/* Buttons */}
@@ -103,12 +103,12 @@ export function CalculatorApp() {
               <button
                 key={btn}
                 className={cn(
-                  "rounded-xl text-xl font-medium transition-colors",
+                  "rounded-xl text-xl font-medium transition-all active:scale-95",
                   btn === "C" || btn === "±" || btn === "%"
-                    ? "bg-secondary text-foreground hover:bg-secondary/70"
+                    ? "bg-white/20 text-white hover:bg-white/30"
                     : isOperator(btn) || btn === "="
-                      ? "bg-primary text-primary-foreground hover:bg-primary/80"
-                      : "bg-secondary/50 text-foreground hover:bg-secondary",
+                      ? "bg-primary text-white hover:bg-primary/80"
+                      : "bg-white/10 text-white hover:bg-white/20",
                 )}
                 onClick={() => {
                   if (btn === "C") clear()

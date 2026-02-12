@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Grid, LayoutGrid, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 const images = [
   { id: 1, query: "beautiful sunset over ocean landscape photography" },
@@ -17,6 +18,7 @@ const images = [
 
 export function Gallery() {
   const [selectedImage, setSelectedImage] = useState<number | null>(null)
+  const [viewMode, setViewMode] = useState<"grid" | "large">("grid")
 
   const openImage = (id: number) => setSelectedImage(id)
   const closeImage = () => setSelectedImage(null)
@@ -32,23 +34,32 @@ export function Gallery() {
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col bg-[oklch(0.12_0.01_250)]">
       {/* Toolbar */}
-      <div className="h-10 bg-secondary/30 border-b border-border flex items-center justify-between px-3">
-        <span className="text-sm text-foreground">图库</span>
+      <div className="h-10 bg-black/30 border-b border-white/10 flex items-center justify-between px-3">
+        <span className="text-sm text-white">图库</span>
         <div className="flex items-center gap-1">
-          <button className="p-1.5 rounded bg-secondary">
-            <Grid className="w-4 h-4" />
+          <button
+            onClick={() => setViewMode("grid")}
+            className={cn("p-1.5 rounded transition-colors", viewMode === "grid" ? "bg-white/10" : "hover:bg-white/10")}
+          >
+            <Grid className="w-4 h-4 text-white/70" />
           </button>
-          <button className="p-1.5 rounded hover:bg-secondary/50 transition-colors">
-            <LayoutGrid className="w-4 h-4" />
+          <button
+            onClick={() => setViewMode("large")}
+            className={cn(
+              "p-1.5 rounded transition-colors",
+              viewMode === "large" ? "bg-white/10" : "hover:bg-white/10",
+            )}
+          >
+            <LayoutGrid className="w-4 h-4 text-white/70" />
           </button>
         </div>
       </div>
 
       {/* Gallery Grid */}
       <div className="flex-1 p-4 overflow-auto">
-        <div className="grid grid-cols-3 gap-3">
+        <div className={cn("grid gap-3", viewMode === "grid" ? "grid-cols-3" : "grid-cols-2")}>
           {images.map((image) => (
             <button
               key={image.id}
@@ -56,7 +67,7 @@ export function Gallery() {
               onClick={() => openImage(image.id)}
             >
               <img
-                src={`/.jpg?height=200&width=200&query=${encodeURIComponent(image.query)}`}
+                src={`/.jpg?height=300&width=300&query=${encodeURIComponent(image.query)}`}
                 alt=""
                 className="w-full h-full object-cover"
               />
@@ -67,7 +78,7 @@ export function Gallery() {
 
       {/* Lightbox */}
       {selectedImage !== null && (
-        <div className="absolute inset-0 bg-black/90 flex items-center justify-center z-50">
+        <div className="absolute inset-0 bg-black/95 flex items-center justify-center z-50">
           <button
             className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
             onClick={closeImage}
@@ -76,8 +87,9 @@ export function Gallery() {
           </button>
 
           <button
-            className="absolute left-4 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+            className="absolute left-4 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors disabled:opacity-30"
             onClick={() => navigateImage("prev")}
+            disabled={images.findIndex((img) => img.id === selectedImage) === 0}
           >
             <ChevronLeft className="w-6 h-6 text-white" />
           </button>
@@ -89,8 +101,9 @@ export function Gallery() {
           />
 
           <button
-            className="absolute right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+            className="absolute right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors disabled:opacity-30"
             onClick={() => navigateImage("next")}
+            disabled={images.findIndex((img) => img.id === selectedImage) === images.length - 1}
           >
             <ChevronRight className="w-6 h-6 text-white" />
           </button>

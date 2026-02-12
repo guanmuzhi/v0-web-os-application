@@ -1,5 +1,5 @@
-import { Desktop } from "@/components/webos/desktop"
+import { WebOSMain } from "@/components/webos/webos-main"
 
 export default function Home() {
-  return <Desktop />
+  return <WebOSMain />
 }
