@@ -1,39 +1,22 @@
 /**
- * WebOS Centralized API Module
- * ============================
- * All system functions are encapsulated here for easy reuse across apps.
- * Categories: File, Desktop, User, Window, Settings, App, Wallpaper, Clipboard, Notification
+ * WebOS API - Centralized Module Library
+ *
+ * All system-level functions are exported from this single file.
+ * Categories:
+ *  - File System (file*)       : CRUD, search, move, copy, read, write on virtual files
+ *  - Settings    (settings*)   : read / write / reset global settings
+ *  - Wallpaper   (wallpaper*)  : list, set, upload, remove wallpapers
+ *  - Users       (user*)       : create, delete, switch, get users
+ *  - Desktops    (desktop*)    : create, delete, switch, rename, get desktops
+ *  - Apps        (app*)        : open apps & html runner via event bus
+ *  - Clipboard   (clipboard*)  : copy text to system clipboard
+ *  - System      (system*)     : lock, mobile detect, event helpers
+ *  - Types                     : all shared TypeScript interfaces
  */
 
-// ─── Re-export types ─────────────────────────────────────────────────────────
-export type {
-  UserProfile,
-  DesktopConfig,
-  WebOSSettings,
-  AppDefinition,
-  WindowState,
-} from "./webos-store"
+import type React from "react"
 
-import {
-  getSettings,
-  saveSettings,
-  getDefaultWallpapers,
-  createUser as _createUser,
-  deleteUser as _deleteUser,
-  switchUser as _switchUser,
-  createDesktop as _createDesktop,
-  deleteDesktop as _deleteDesktop,
-  switchDesktop as _switchDesktop,
-  type UserProfile,
-  type DesktopConfig,
-  type WebOSSettings,
-  type AppDefinition,
-  type WindowState,
-} from "./webos-store"
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 1. FILE SYSTEM API
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface VirtualFile {
   id: string
@@ -47,559 +30,613 @@ export interface VirtualFile {
   modifiedAt: number
 }
 
-interface CreateFileOptions {
+export interface UserProfile {
+  id: string
+  name: string
+  avatar: string
+  color: string
+  createdAt: number
+}
+
+export interface DesktopConfig {
+  id: string
+  name: string
+  wallpaper: string
+  iconLayout: { appId: string; x: number; y: number }[]
+}
+
+export interface WebOSSettings {
+  wallpaper: string
+  wallpaperType: "url" | "color" | "custom"
+  customWallpapers: string[]
+  brightness: number
+  nightMode: boolean
+  animations: boolean
+  pixelEffect: boolean
+  volume: number
+  muted: boolean
+  notificationSound: boolean
+  systemSound: boolean
+  wifiEnabled: boolean
+  wifiNetwork: string
+  bluetoothEnabled: boolean
+  bluetoothDevices: string[]
+  notificationsEnabled: boolean
+  doNotDisturb: boolean
+  showPreviews: boolean
+  locationEnabled: boolean
+  analyticsEnabled: boolean
+  theme: "dark" | "light" | "auto"
+  accentColor: string
+  fontSize: "small" | "medium" | "large"
+  dockPosition: "left" | "bottom"
+  language: "zh" | "en"
+  timeFormat: "12h" | "24h"
+  dateFormat: "yyyy-mm-dd" | "mm-dd-yyyy" | "dd-mm-yyyy"
+  currentUserId: string
+  userName: string
+  users: UserProfile[]
+  desktops: DesktopConfig[]
+  currentDesktopId: string
+}
+
+export interface AppDefinition {
+  id: string
+  title: string
+  icon: React.ReactNode
+  component: string
+  category: "system" | "productivity" | "media" | "games" | "utilities"
+}
+
+export interface WindowState {
+  id: string
+  appId: string
+  title: string
+  icon: React.ReactNode
+  component: string
+  isMinimized: boolean
+  isMaximized: boolean
+  zIndex: number
+  position: { x: number; y: number }
+  size: { width: number; height: number }
+  props?: Record<string, unknown>
+}
+
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const DB_NAME = "webos-fs"
+const DB_VERSION = 1
+const STORE_NAME = "files"
+const SETTINGS_KEY = "webos-settings"
+
+const DEFAULT_WALLPAPERS = [
+  "/images/49fab4ed-fc84-4ac0-8f8c-a64b12e4dc5a.png",
+  "/images/717d6c43-94a2-4990-a795-c9ad958076d7-minecraft-thegardenawakens-dotnet-2560x1440.png",
+  "/images/4374e6df-d55f-400b-8abe-ee00d5f1fb7b-wallpaper-minecraft-burberry-2560x1440.png",
+]
+
+const DEFAULT_USER: UserProfile = {
+  id: "default",
+  name: "用户",
+  avatar: "",
+  color: "#3b82f6",
+  createdAt: Date.now(),
+}
+
+const DEFAULT_DESKTOP: DesktopConfig = {
+  id: "desktop-1",
+  name: "桌面 1",
+  wallpaper: DEFAULT_WALLPAPERS[0],
+  iconLayout: [],
+}
+
+const DEFAULT_SETTINGS: WebOSSettings = {
+  wallpaper: DEFAULT_WALLPAPERS[0],
+  wallpaperType: "url",
+  customWallpapers: [],
+  brightness: 100,
+  nightMode: false,
+  animations: true,
+  pixelEffect: false,
+  volume: 75,
+  muted: false,
+  notificationSound: true,
+  systemSound: true,
+  wifiEnabled: true,
+  wifiNetwork: "WebOS-Network",
+  bluetoothEnabled: false,
+  bluetoothDevices: [],
+  notificationsEnabled: true,
+  doNotDisturb: false,
+  showPreviews: true,
+  locationEnabled: false,
+  analyticsEnabled: false,
+  theme: "dark",
+  accentColor: "#3b82f6",
+  fontSize: "medium",
+  dockPosition: "left",
+  language: "zh",
+  timeFormat: "24h",
+  dateFormat: "yyyy-mm-dd",
+  currentUserId: "default",
+  userName: "用户",
+  users: [DEFAULT_USER],
+  desktops: [DEFAULT_DESKTOP],
+  currentDesktopId: "desktop-1",
+}
+
+// ─── IndexedDB helper ───────────────────────────────────────────────────────
+
+function openDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "id" })
+      }
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+async function dbGetAll(): Promise<VirtualFile[]> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readonly")
+    const store = tx.objectStore(STORE_NAME)
+    const req = store.getAll()
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+async function dbGet(id: string): Promise<VirtualFile | undefined> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readonly")
+    const store = tx.objectStore(STORE_NAME)
+    const req = store.get(id)
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+async function dbPut(file: VirtualFile): Promise<void> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite")
+    const store = tx.objectStore(STORE_NAME)
+    store.put(file)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+async function dbDelete(id: string): Promise<void> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite")
+    const store = tx.objectStore(STORE_NAME)
+    store.delete(id)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+// ─── File System Initialization ─────────────────────────────────────────────
+
+let fsInitialized = false
+
+async function ensureDefaultFolders() {
+  if (fsInitialized) return
+  fsInitialized = true
+  const all = await dbGetAll()
+  const ids = new Set(all.map((f) => f.id))
+  const defaultFolders: VirtualFile[] = [
+    { id: "home", name: "主目录", type: "folder", parentId: "root", size: 0, createdAt: Date.now(), modifiedAt: Date.now() },
+    { id: "documents", name: "文档", type: "folder", parentId: "home", size: 0, createdAt: Date.now(), modifiedAt: Date.now() },
+    { id: "downloads", name: "下载", type: "folder", parentId: "home", size: 0, createdAt: Date.now(), modifiedAt: Date.now() },
+    { id: "pictures", name: "图片", type: "folder", parentId: "home", size: 0, createdAt: Date.now(), modifiedAt: Date.now() },
+    { id: "music", name: "音乐", type: "folder", parentId: "home", size: 0, createdAt: Date.now(), modifiedAt: Date.now() },
+    { id: "videos", name: "视频", type: "folder", parentId: "home", size: 0, createdAt: Date.now(), modifiedAt: Date.now() },
+    { id: "apps", name: "应用", type: "folder", parentId: "home", size: 0, createdAt: Date.now(), modifiedAt: Date.now() },
+  ]
+  for (const folder of defaultFolders) {
+    if (!ids.has(folder.id)) await dbPut(folder)
+  }
+  // Seed a sample HTML app
+  if (!ids.has("sample-app-clock")) {
+    await dbPut({
+      id: "sample-app-clock",
+      name: "时钟.html",
+      type: "file",
+      parentId: "apps",
+      mimeType: "text/html",
+      content: `<!DOCTYPE html><html><head><style>body{margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a2e;font-family:monospace}.t{font-size:5rem;color:#00ff88;text-shadow:0 0 20px rgba(0,255,136,.5)}</style></head><body><div class="t" id="t"></div><script>setInterval(()=>{document.getElementById('t').textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false})},1000)</script></body></html>`,
+      size: 400,
+      createdAt: Date.now(),
+      modifiedAt: Date.now(),
+    })
+  }
+  if (!ids.has("sample-readme")) {
+    await dbPut({
+      id: "sample-readme",
+      name: "欢迎.txt",
+      type: "file",
+      parentId: "documents",
+      mimeType: "text/plain",
+      content: "欢迎使用 WebOS!\n\n这是一个运行在浏览器中的桌面操作系统。\n\n你可以:\n- 使用文件管理器浏览文件\n- 在终端中运行命令\n- 在 HTML 运行器中编写和运行程序\n- 使用设置自定义你的桌面\n\n所有文件存储在浏览器的 IndexedDB 中。",
+      size: 200,
+      createdAt: Date.now(),
+      modifiedAt: Date.now(),
+    })
+  }
+}
+
+// ─── File System API ────────────────────────────────────────────────────────
+
+/** List files in a directory */
+export async function fileList(parentId: string): Promise<VirtualFile[]> {
+  await ensureDefaultFolders()
+  const all = await dbGetAll()
+  return all.filter((f) => f.parentId === parentId).sort((a, b) => {
+    if (a.type !== b.type) return a.type === "folder" ? -1 : 1
+    return a.name.localeCompare(b.name)
+  })
+}
+
+/** Get a single file by ID */
+export async function fileGet(id: string): Promise<VirtualFile | undefined> {
+  await ensureDefaultFolders()
+  return dbGet(id)
+}
+
+/** Read file content as string */
+export async function fileRead(id: string): Promise<string> {
+  const file = await fileGet(id)
+  return file?.content ?? ""
+}
+
+/** Write content to an existing file */
+export async function fileWrite(id: string, content: string): Promise<void> {
+  const file = await dbGet(id)
+  if (!file) return
+  file.content = content
+  file.size = new Blob([content]).size
+  file.modifiedAt = Date.now()
+  await dbPut(file)
+}
+
+/** Create a new file or folder */
+export async function fileCreate(opts: {
   name: string
   type: "file" | "folder"
   parentId: string
   content?: string
   mimeType?: string
   size: number
+}): Promise<VirtualFile> {
+  await ensureDefaultFolders()
+  const file: VirtualFile = {
+    id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: opts.name,
+    type: opts.type,
+    parentId: opts.parentId,
+    content: opts.content,
+    mimeType: opts.mimeType,
+    size: opts.size,
+    createdAt: Date.now(),
+    modifiedAt: Date.now(),
+  }
+  await dbPut(file)
+  return file
 }
 
-const DB_NAME = "webos-fs"
-const DB_VERSION = 1
-const STORE_NAME = "files"
-
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
-    request.onupgradeneeded = () => {
-      const db = request.result
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: "id" })
-        store.createIndex("parentId", "parentId", { unique: false })
+/** Delete a file or folder (and its children) */
+export async function fileDelete(id: string): Promise<void> {
+  const all = await dbGetAll()
+  const toDelete = new Set<string>([id])
+  // Recursively find children
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const f of all) {
+      if (toDelete.has(f.parentId) && !toDelete.has(f.id)) {
+        toDelete.add(f.id)
+        changed = true
       }
     }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-let hasSeeded = false
-
-async function seedDefaultFiles(db: IDBDatabase): Promise<void> {
-  if (hasSeeded) return
-  const tx = db.transaction(STORE_NAME, "readonly")
-  const store = tx.objectStore(STORE_NAME)
-  const count = await new Promise<number>((resolve) => {
-    const req = store.count()
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => resolve(0)
-  })
-
-  if (count > 0) {
-    hasSeeded = true
-    return
   }
-  hasSeeded = true
-
-  const now = Date.now()
-  const defaults: VirtualFile[] = [
-    { id: "home", name: "主目录", type: "folder", parentId: "root", size: 0, createdAt: now, modifiedAt: now },
-    { id: "downloads", name: "下载", type: "folder", parentId: "root", size: 0, createdAt: now, modifiedAt: now },
-    { id: "documents", name: "文档", type: "folder", parentId: "root", size: 0, createdAt: now, modifiedAt: now },
-    { id: "pictures", name: "图片", type: "folder", parentId: "root", size: 0, createdAt: now, modifiedAt: now },
-    { id: "music", name: "音乐", type: "folder", parentId: "root", size: 0, createdAt: now, modifiedAt: now },
-    { id: "videos", name: "视频", type: "folder", parentId: "root", size: 0, createdAt: now, modifiedAt: now },
-    { id: "apps", name: "应用", type: "folder", parentId: "root", size: 0, createdAt: now, modifiedAt: now },
-    {
-      id: "readme",
-      name: "欢迎.txt",
-      type: "file",
-      parentId: "documents",
-      content: "欢迎使用 WebOS!\n\n这是一个运行在浏览器中的虚拟操作系统。\n你可以创建文件、运行 HTML 应用、管理多个桌面。\n\n使用终端输入 help 了解更多命令。",
-      mimeType: "text/plain",
-      size: 120,
-      createdAt: now,
-      modifiedAt: now,
-    },
-    {
-      id: "demo-app",
-      name: "计数器.html",
-      type: "file",
-      parentId: "apps",
-      content: `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>计数器</title>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:system-ui;min-height:100vh;background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;align-items:center;justify-content:center}.container{text-align:center}h1{font-size:2.5rem;margin-bottom:1rem;background:linear-gradient(90deg,#00d9ff,#00ff88);-webkit-background-clip:text;-webkit-text-fill-color:transparent}button{background:linear-gradient(90deg,#00d9ff,#00ff88);border:none;padding:12px 32px;border-radius:8px;font-size:1rem;font-weight:600;color:#1a1a2e;cursor:pointer;transition:transform .2s}button:hover{transform:translateY(-2px)}.count{font-size:5rem;margin:1rem 0;font-weight:bold}</style>
-</head><body><div class="container"><h1>计数器应用</h1><div class="count" id="c">0</div><button onclick="document.getElementById('c').textContent=++n">点击 +1</button></div><script>let n=0</script></body></html>`,
-      mimeType: "text/html",
-      size: 650,
-      createdAt: now,
-      modifiedAt: now,
-    },
-    {
-      id: "demo-clock",
-      name: "时钟.html",
-      type: "file",
-      parentId: "apps",
-      content: `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>时钟</title>
-<style>body{margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a2e;font-family:'Courier New',monospace}.time{font-size:6rem;color:#00ff88;text-shadow:0 0 20px rgba(0,255,136,.5);text-align:center}.date{font-size:1.2rem;color:rgba(255,255,255,.6);margin-top:1rem;text-align:center}</style>
-</head><body><div><div class="time" id="t"></div><div class="date" id="d"></div></div><script>setInterval(()=>{const n=new Date;document.getElementById('t').textContent=n.toLocaleTimeString('zh-CN',{hour12:false});document.getElementById('d').textContent=n.toLocaleDateString('zh-CN',{weekday:'long',year:'numeric',month:'long',day:'numeric'})},1000)</script></body></html>`,
-      mimeType: "text/html",
-      size: 580,
-      createdAt: now,
-      modifiedAt: now,
-    },
-  ]
-
-  const wtx = db.transaction(STORE_NAME, "readwrite")
-  const wstore = wtx.objectStore(STORE_NAME)
-  for (const file of defaults) {
-    wstore.put(file)
+  for (const delId of toDelete) {
+    await dbDelete(delId)
   }
-}
-
-/** List files in a folder */
-export async function fileList(parentId: string): Promise<VirtualFile[]> {
-  const db = await openDB()
-  await seedDefaultFiles(db)
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readonly")
-    const index = tx.objectStore(STORE_NAME).index("parentId")
-    const request = index.getAll(parentId)
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-/** Get a single file by id */
-export async function fileGet(fileId: string): Promise<VirtualFile | undefined> {
-  const db = await openDB()
-  await seedDefaultFiles(db)
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readonly")
-    const request = tx.objectStore(STORE_NAME).get(fileId)
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-/** Create a file or folder */
-export async function fileCreate(options: CreateFileOptions): Promise<VirtualFile> {
-  const db = await openDB()
-  const now = Date.now()
-  const file: VirtualFile = {
-    id: `file-${now}-${Math.random().toString(36).slice(2, 8)}`,
-    name: options.name,
-    type: options.type,
-    parentId: options.parentId,
-    content: options.content,
-    mimeType: options.mimeType,
-    size: options.size,
-    createdAt: now,
-    modifiedAt: now,
-  }
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite")
-    const request = tx.objectStore(STORE_NAME).put(file)
-    request.onsuccess = () => resolve(file)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-/** Delete a file or folder (and children recursively) */
-export async function fileDelete(fileId: string): Promise<void> {
-  const db = await openDB()
-  // Delete children first
-  const children = await fileList(fileId)
-  for (const child of children) {
-    await fileDelete(child.id)
-  }
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite")
-    const request = tx.objectStore(STORE_NAME).delete(fileId)
-    request.onsuccess = () => resolve()
-    request.onerror = () => reject(request.error)
-  })
 }
 
 /** Rename a file or folder */
-export async function fileRename(fileId: string, newName: string): Promise<VirtualFile | undefined> {
-  const file = await fileGet(fileId)
-  if (!file) return undefined
+export async function fileRename(id: string, newName: string): Promise<void> {
+  const file = await dbGet(id)
+  if (!file) return
   file.name = newName
   file.modifiedAt = Date.now()
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite")
-    const request = tx.objectStore(STORE_NAME).put(file)
-    request.onsuccess = () => resolve(file)
-    request.onerror = () => reject(request.error)
-  })
+  await dbPut(file)
 }
 
-/** Move a file to another folder */
-export async function fileMove(fileId: string, newParentId: string): Promise<VirtualFile | undefined> {
-  const file = await fileGet(fileId)
-  if (!file) return undefined
+/** Move a file to a different parent folder */
+export async function fileMove(id: string, newParentId: string): Promise<void> {
+  const file = await dbGet(id)
+  if (!file) return
   file.parentId = newParentId
   file.modifiedAt = Date.now()
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite")
-    const request = tx.objectStore(STORE_NAME).put(file)
-    request.onsuccess = () => resolve(file)
-    request.onerror = () => reject(request.error)
-  })
+  await dbPut(file)
 }
 
-/** Copy a file (creates a new file with same content) */
-export async function fileCopy(fileId: string, newParentId?: string): Promise<VirtualFile | undefined> {
-  const file = await fileGet(fileId)
-  if (!file) return undefined
-  return fileCreate({
-    name: `${file.name} (副本)`,
-    type: file.type,
-    parentId: newParentId || file.parentId,
-    content: file.content,
-    mimeType: file.mimeType,
-    size: file.size,
-  })
-}
-
-/** Update file content */
-export async function fileWrite(fileId: string, content: string): Promise<VirtualFile | undefined> {
-  const file = await fileGet(fileId)
-  if (!file) return undefined
-  file.content = content
-  file.size = new Blob([content]).size
-  file.modifiedAt = Date.now()
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite")
-    const request = tx.objectStore(STORE_NAME).put(file)
-    request.onsuccess = () => resolve(file)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-/** Read file content */
-export async function fileRead(fileId: string): Promise<string> {
-  const file = await fileGet(fileId)
-  return file?.content || ""
+/** Copy a file to a target folder */
+export async function fileCopy(id: string, targetParentId: string): Promise<VirtualFile> {
+  const original = await dbGet(id)
+  if (!original) throw new Error("File not found")
+  const copy: VirtualFile = {
+    ...original,
+    id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: `${original.name} (副本)`,
+    parentId: targetParentId,
+    createdAt: Date.now(),
+    modifiedAt: Date.now(),
+  }
+  await dbPut(copy)
+  return copy
 }
 
 /** Search files by name */
 export async function fileSearch(query: string): Promise<VirtualFile[]> {
-  const db = await openDB()
-  await seedDefaultFiles(db)
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readonly")
-    const request = tx.objectStore(STORE_NAME).getAll()
-    request.onsuccess = () => {
-      const all: VirtualFile[] = request.result
-      const lq = query.toLowerCase()
-      resolve(all.filter((f) => f.name.toLowerCase().includes(lq)))
-    }
-    request.onerror = () => reject(request.error)
-  })
+  await ensureDefaultFolders()
+  const all = await dbGetAll()
+  const lowerQuery = query.toLowerCase()
+  return all.filter((f) => f.name.toLowerCase().includes(lowerQuery))
 }
 
-/** Get total storage used */
+/** Calculate total storage used (bytes) */
 export async function fileStorageUsed(): Promise<number> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readonly")
-    const request = tx.objectStore(STORE_NAME).getAll()
-    request.onsuccess = () => {
-      const files: VirtualFile[] = request.result
-      resolve(files.reduce((sum, f) => sum + f.size, 0))
-    }
-    request.onerror = () => reject(request.error)
-  })
+  const all = await dbGetAll()
+  return all.reduce((sum, f) => sum + (f.size || 0) + (f.content?.length || 0), 0)
 }
 
-/** Format bytes to human-readable string */
+/** Format byte size to human-readable string */
 export function fileFormatSize(bytes: number): string {
   if (bytes === 0) return "0 B"
-  const k = 1024
-  const sizes = ["B", "KB", "MB", "GB"]
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return `${Number.parseFloat((bytes / k ** i).toFixed(1))} ${sizes[i]}`
+  const units = ["B", "KB", "MB", "GB"]
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  return `${(bytes / 1024 ** i).toFixed(1)} ${units[i]}`
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 2. DESKTOP API
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Settings API ───────────────────────────────────────────────────────────
 
-/** Create a new desktop */
-export function desktopCreate(name: string, wallpaper?: string): DesktopConfig {
-  return _createDesktop(name, wallpaper)
-}
-
-/** Delete a desktop */
-export function desktopDelete(desktopId: string): void {
-  _deleteDesktop(desktopId)
-}
-
-/** Switch to a desktop */
-export function desktopSwitch(desktopId: string): WebOSSettings {
-  return _switchDesktop(desktopId)
-}
-
-/** Rename a desktop */
-export function desktopRename(desktopId: string, newName: string): WebOSSettings {
-  const settings = settingsGet()
-  const desktops = settings.desktops.map((d) =>
-    d.id === desktopId ? { ...d, name: newName } : d
-  )
-  return settingsSave({ desktops })
-}
-
-/** Set wallpaper for a desktop */
-export function desktopSetWallpaper(desktopId: string, wallpaper: string): WebOSSettings {
-  const settings = settingsGet()
-  const desktops = settings.desktops.map((d) =>
-    d.id === desktopId ? { ...d, wallpaper } : d
-  )
-  return settingsSave({ desktops })
-}
-
-/** List all desktops */
-export function desktopList(): DesktopConfig[] {
-  return settingsGet().desktops
-}
-
-/** Get current desktop */
-export function desktopGetCurrent(): DesktopConfig | undefined {
-  const s = settingsGet()
-  return s.desktops.find((d) => d.id === s.currentDesktopId)
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 3. USER API
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/** Create a new user */
-export function userCreate(name: string, color: string): UserProfile {
-  return _createUser(name, color)
-}
-
-/** Delete a user */
-export function userDelete(userId: string): void {
-  _deleteUser(userId)
-}
-
-/** Switch to a user */
-export function userSwitch(userId: string): WebOSSettings {
-  return _switchUser(userId)
-}
-
-/** Rename a user */
-export function userRename(userId: string, newName: string): WebOSSettings {
-  const settings = settingsGet()
-  const users = settings.users.map((u) =>
-    u.id === userId ? { ...u, name: newName } : u
-  )
-  const userName = settings.currentUserId === userId ? newName : settings.userName
-  return settingsSave({ users, userName })
-}
-
-/** Set user avatar */
-export function userSetAvatar(userId: string, avatar: string): WebOSSettings {
-  const settings = settingsGet()
-  const users = settings.users.map((u) =>
-    u.id === userId ? { ...u, avatar } : u
-  )
-  return settingsSave({ users })
-}
-
-/** Set user color */
-export function userSetColor(userId: string, color: string): WebOSSettings {
-  const settings = settingsGet()
-  const users = settings.users.map((u) =>
-    u.id === userId ? { ...u, color } : u
-  )
-  return settingsSave({ users })
-}
-
-/** List all users */
-export function userList(): UserProfile[] {
-  return settingsGet().users
-}
-
-/** Get current user */
-export function userGetCurrent(): UserProfile | undefined {
-  const s = settingsGet()
-  return s.users.find((u) => u.id === s.currentUserId)
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 4. SETTINGS API
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/** Get all settings */
+/** Read current settings */
 export function settingsGet(): WebOSSettings {
-  return getSettings()
+  if (typeof window === "undefined") return DEFAULT_SETTINGS
+  try {
+    const stored = localStorage.getItem(SETTINGS_KEY)
+    if (stored) return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) }
+  } catch { /* ignore */ }
+  return DEFAULT_SETTINGS
 }
 
-/** Save partial settings (merges with existing) */
+/** Save partial settings, returns the full merged result */
 export function settingsSave(partial: Partial<WebOSSettings>): WebOSSettings {
-  const updated = saveSettings(partial)
+  const current = settingsGet()
+  const updated = { ...current, ...partial }
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated))
+  // Broadcast change event
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("webos-settings-change", { detail: updated }))
   }
   return updated
 }
 
-/** Reset all settings to defaults */
-export function settingsReset(): WebOSSettings {
-  if (typeof window !== "undefined") {
-    localStorage.removeItem("webos-settings")
-  }
-  return settingsGet()
+/** Reset settings to defaults */
+export function settingsReset(): void {
+  localStorage.removeItem(SETTINGS_KEY)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 5. WALLPAPER API
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Wallpaper API ──────────────────────────────────────────────────────────
 
-/** Get default wallpapers */
+/** Get default (built-in) wallpapers */
 export function wallpaperListDefaults(): string[] {
-  return getDefaultWallpapers()
+  return [...DEFAULT_WALLPAPERS]
 }
 
-/** Get all wallpapers (default + custom) */
+/** Get all wallpapers (defaults + custom uploads) */
 export function wallpaperListAll(): string[] {
   const s = settingsGet()
-  return [...getDefaultWallpapers(), ...s.customWallpapers]
+  return [...DEFAULT_WALLPAPERS, ...(s.customWallpapers || [])]
 }
 
-/** Set current wallpaper */
-export function wallpaperSet(url: string): WebOSSettings {
-  return settingsSave({ wallpaper: url })
+/** Set the current wallpaper and sync to current desktop */
+export function wallpaperSet(url: string): void {
+  const s = settingsGet()
+  const desktops = s.desktops.map((d) =>
+    d.id === s.currentDesktopId ? { ...d, wallpaper: url } : d
+  )
+  settingsSave({ wallpaper: url, desktops })
 }
 
-/** Upload a custom wallpaper from a File object, returns data URL */
-export function wallpaperUpload(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
+/** Upload a wallpaper from a File object (converts to data-url) */
+export async function wallpaperUpload(file: File): Promise<string> {
+  return new Promise((resolve) => {
     const reader = new FileReader()
     reader.onload = () => {
       const dataUrl = reader.result as string
       const s = settingsGet()
-      settingsSave({ customWallpapers: [...s.customWallpapers, dataUrl], wallpaper: dataUrl })
+      const customs = [...(s.customWallpapers || []), dataUrl]
+      settingsSave({ customWallpapers: customs, wallpaper: dataUrl })
       resolve(dataUrl)
     }
-    reader.onerror = () => reject(reader.error)
     reader.readAsDataURL(file)
   })
 }
 
 /** Remove a custom wallpaper */
-export function wallpaperRemoveCustom(url: string): WebOSSettings {
+export function wallpaperRemoveCustom(url: string): void {
   const s = settingsGet()
-  const customWallpapers = s.customWallpapers.filter((w) => w !== url)
-  const wallpaper = s.wallpaper === url ? getDefaultWallpapers()[0] : s.wallpaper
-  return settingsSave({ customWallpapers, wallpaper })
+  const customs = (s.customWallpapers || []).filter((w) => w !== url)
+  const newWallpaper = s.wallpaper === url ? DEFAULT_WALLPAPERS[0] : s.wallpaper
+  settingsSave({ customWallpapers: customs, wallpaper: newWallpaper })
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 6. WINDOW MANAGEMENT API (dispatches events that WebOSMain listens to)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── User API ───────────────────────────────────────────────────────────────
 
-/** Open an app by its id */
+/** Create a new user, returns the profile */
+export function userCreate(name: string, color: string): UserProfile {
+  const user: UserProfile = {
+    id: `user-${Date.now()}`,
+    name,
+    avatar: "",
+    color,
+    createdAt: Date.now(),
+  }
+  const s = settingsGet()
+  settingsSave({ users: [...s.users, user] })
+  return user
+}
+
+/** Delete a user (must keep at least one) */
+export function userDelete(userId: string): void {
+  const s = settingsGet()
+  if (s.users.length <= 1) return
+  const users = s.users.filter((u) => u.id !== userId)
+  const currentUserId = s.currentUserId === userId ? users[0].id : s.currentUserId
+  const userName = s.currentUserId === userId ? users[0].name : s.userName
+  settingsSave({ users, currentUserId, userName })
+}
+
+/** Switch the active user, returns updated settings */
+export function userSwitch(userId: string): WebOSSettings {
+  const s = settingsGet()
+  const user = s.users.find((u) => u.id === userId)
+  if (!user) return s
+  return settingsSave({ currentUserId: userId, userName: user.name })
+}
+
+/** Get the current active user */
+export function userGetCurrent(): UserProfile | undefined {
+  const s = settingsGet()
+  return s.users.find((u) => u.id === s.currentUserId)
+}
+
+/** Get all users */
+export function userListAll(): UserProfile[] {
+  return settingsGet().users
+}
+
+// ─── Desktop API ────────────────────────────────────────────────────────────
+
+/** Create a new desktop, returns the config */
+export function desktopCreate(name: string, wallpaper?: string): DesktopConfig {
+  const s = settingsGet()
+  const desktop: DesktopConfig = {
+    id: `desktop-${Date.now()}`,
+    name,
+    wallpaper: wallpaper || s.wallpaper,
+    iconLayout: [],
+  }
+  settingsSave({ desktops: [...s.desktops, desktop] })
+  return desktop
+}
+
+/** Delete a desktop (must keep at least one) */
+export function desktopDelete(desktopId: string): void {
+  const s = settingsGet()
+  if (s.desktops.length <= 1) return
+  const desktops = s.desktops.filter((d) => d.id !== desktopId)
+  const currentDesktopId = s.currentDesktopId === desktopId ? desktops[0].id : s.currentDesktopId
+  settingsSave({ desktops, currentDesktopId })
+}
+
+/** Switch the active desktop, returns updated settings */
+export function desktopSwitch(desktopId: string): WebOSSettings {
+  const s = settingsGet()
+  const desktop = s.desktops.find((d) => d.id === desktopId)
+  if (!desktop) return s
+  return settingsSave({ currentDesktopId: desktopId, wallpaper: desktop.wallpaper })
+}
+
+/** Get the current active desktop */
+export function desktopGetCurrent(): DesktopConfig | undefined {
+  const s = settingsGet()
+  return s.desktops.find((d) => d.id === s.currentDesktopId)
+}
+
+/** Rename a desktop */
+export function desktopRename(desktopId: string, newName: string): void {
+  const s = settingsGet()
+  const desktops = s.desktops.map((d) => d.id === desktopId ? { ...d, name: newName } : d)
+  settingsSave({ desktops })
+}
+
+/** Get all desktops */
+export function desktopListAll(): DesktopConfig[] {
+  return settingsGet().desktops
+}
+
+/** Update wallpaper for a specific desktop */
+export function desktopSetWallpaper(desktopId: string, wallpaper: string): void {
+  const s = settingsGet()
+  const desktops = s.desktops.map((d) => d.id === desktopId ? { ...d, wallpaper } : d)
+  const wp = s.currentDesktopId === desktopId ? wallpaper : s.wallpaper
+  settingsSave({ desktops, wallpaper: wp })
+}
+
+// ─── App Launch API ─────────────────────────────────────────────────────────
+
+/** Open an app by ID (fires custom event consumed by webos-main) */
 export function appOpen(appId: string, props?: Record<string, unknown>): void {
   window.dispatchEvent(new CustomEvent("webos-open-app", { detail: { appId, props } }))
 }
 
-/** Open an HTML file in the HTML Runner */
+/** Open an HTML file in the HTML runner */
 export function appOpenHtml(content: string, fileName: string): void {
   window.dispatchEvent(new CustomEvent("webos-open-html", { detail: { content, fileName } }))
 }
 
-/** Request lock screen */
-export function systemLock(): void {
-  window.dispatchEvent(new CustomEvent("webos-lock"))
-}
+// ─── Clipboard API ──────────────────────────────────────────────────────────
 
-/** Request navigate to welcome screen */
-export function systemShowWelcome(): void {
-  window.dispatchEvent(new CustomEvent("webos-show-welcome"))
-}
-
-/** Show desktop manager modal */
-export function systemShowDesktopManager(): void {
-  window.dispatchEvent(new CustomEvent("webos-show-desktop-manager"))
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 7. CLIPBOARD API
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/** Copy text to clipboard */
+/** Copy text to the system clipboard */
 export async function clipboardCopy(text: string): Promise<void> {
-  await navigator.clipboard.writeText(text)
-}
-
-/** Read text from clipboard */
-export async function clipboardRead(): Promise<string> {
-  return navigator.clipboard.readText()
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 8. NOTIFICATION API
-// ═══════════════════════════════════════════════════════════════════════════════
-
-interface WebOSNotification {
-  id: string
-  title: string
-  body: string
-  timestamp: number
-}
-
-const notifications: WebOSNotification[] = []
-
-/** Send a notification */
-export function notificationSend(title: string, body: string): WebOSNotification {
-  const n: WebOSNotification = {
-    id: `notif-${Date.now()}`,
-    title,
-    body,
-    timestamp: Date.now(),
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // Fallback
+    const ta = document.createElement("textarea")
+    ta.value = text
+    ta.style.position = "fixed"
+    ta.style.opacity = "0"
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand("copy")
+    document.body.removeChild(ta)
   }
-  notifications.push(n)
-  window.dispatchEvent(new CustomEvent("webos-notification", { detail: n }))
-  return n
 }
 
-/** List recent notifications */
-export function notificationList(): WebOSNotification[] {
-  return [...notifications]
+// ─── System API ─────────────────────────────────────────────────────────────
+
+/** Lock the screen */
+export function systemLock(): void {
+  window.dispatchEvent(new Event("webos-lock"))
 }
 
-/** Clear all notifications */
-export function notificationClear(): void {
-  notifications.length = 0
+/** Show the welcome / app-launcher screen */
+export function systemShowWelcome(): void {
+  window.dispatchEvent(new Event("webos-show-welcome"))
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 9. UTILITY HELPERS
-// ═══════════════════════════════════════════════════════════════════════════════
+/** Show the desktop manager overlay */
+export function systemShowDesktopManager(): void {
+  window.dispatchEvent(new Event("webos-show-desktop-manager"))
+}
 
-/** Check if the device is mobile */
+/** Detect if current device is mobile */
 export function isMobileDevice(): boolean {
   if (typeof window === "undefined") return false
-  return window.innerWidth < 768
-}
-
-/** Get formatted date string */
-export function formatDate(date?: Date, format?: "yyyy-mm-dd" | "mm-dd-yyyy" | "dd-mm-yyyy"): string {
-  const d = date || new Date()
-  const f = format || settingsGet().dateFormat
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  switch (f) {
-    case "mm-dd-yyyy": return `${m}-${day}-${y}`
-    case "dd-mm-yyyy": return `${day}-${m}-${y}`
-    default: return `${y}-${m}-${day}`
-  }
-}
-
-/** Get formatted time string */
-export function formatTime(date?: Date, format?: "12h" | "24h"): string {
-  const d = date || new Date()
-  const f = format || settingsGet().timeFormat
-  return d.toLocaleTimeString("zh-CN", { hour12: f === "12h", hour: "2-digit", minute: "2-digit" })
+  return window.innerWidth < 768 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
 }

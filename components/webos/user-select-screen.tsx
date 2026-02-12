@@ -3,8 +3,7 @@
 import type React from "react"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
-import type { UserProfile } from "@/lib/webos-store"
-import { createUser } from "@/lib/webos-store"
+import { userCreate, type UserProfile, createUser } from "@/lib/webos-api"
 import { Plus, User, Check, X, Trash2 } from "lucide-react"
 
 interface UserSelectScreenProps {
@@ -40,7 +39,7 @@ export function UserSelectScreen({
 
   const handleCreateUser = () => {
     if (!newUserName.trim()) return
-    const newUser = createUser(newUserName.trim(), selectedColor)
+    const newUser = userCreate(newUserName.trim(), selectedColor)
     onUsersChange([...users, newUser])
     setNewUserName("")
     setSelectedColor(USER_COLORS[0])

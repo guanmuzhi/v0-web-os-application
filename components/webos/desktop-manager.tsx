@@ -3,9 +3,11 @@
 import type React from "react"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
-import type { DesktopConfig } from "@/lib/webos-store"
-import { createDesktop, deleteDesktop, getDefaultWallpapers } from "@/lib/webos-store"
+import { desktopCreate, desktopDelete, wallpaperListDefaults, type DesktopConfig } from "@/lib/webos-api"
 import { Plus, X, Check, Monitor } from "lucide-react"
+import { getDefaultWallpapers } from "@/lib/wallpaper-utils" // Import getDefaultWallpapers
+import { createDesktop } from "@/lib/desktop-utils" // Import createDesktop
+import { deleteDesktop } from "@/lib/desktop-utils" // Import deleteDesktop
 
 interface DesktopManagerProps {
   desktops: DesktopConfig[]
@@ -24,11 +26,11 @@ export function DesktopManager({
 }: DesktopManagerProps) {
   const [isCreating, setIsCreating] = useState(false)
   const [newDesktopName, setNewDesktopName] = useState("")
-  const [selectedWallpaper, setSelectedWallpaper] = useState(getDefaultWallpapers()[0])
+  const [selectedWallpaper, setSelectedWallpaper] = useState(wallpaperListDefaults()[0])
 
   const handleCreateDesktop = () => {
     if (!newDesktopName.trim()) return
-    const newDesktop = createDesktop(newDesktopName.trim(), selectedWallpaper)
+    const newDesktop = desktopCreate(newDesktopName.trim(), selectedWallpaper)
     onDesktopsChange([...desktops, newDesktop])
     setNewDesktopName("")
     setIsCreating(false)
